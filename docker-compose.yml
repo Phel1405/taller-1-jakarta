@@ -3,7 +3,7 @@ services:
     build:
       context: ./logic-tier/
     ports:
-      - "8080:8080"
+      - "8081:8080"
     depends_on:
       - data-tier
 
@@ -11,7 +11,7 @@ services:
     build:
       context: ./data-tier
     ports:
-      - "8081:8080"
+      - "8082:8080"
       - "50051:50051"
 
   postgres:
@@ -33,7 +33,7 @@ services:
       MYSQL_PASSWORD: "{MYSQL_PASSWORD}"
       MYSQL_ROOT_PASSWORD: "{MYSQL_ROOT_PASSWORD}"
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
 
