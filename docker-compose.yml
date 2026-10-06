@@ -1,0 +1,15 @@
+services:
+  logic-tier:
+    build:
+      context: ./logic-tier/
+    ports:
+      - "8080:8080"
+    depends_on:
+      - data-tier
+
+  data-tier:
+    build:
+      context: ./data-tier
+    ports:
+      - "8081:8080"
+      - "50051:50051"
