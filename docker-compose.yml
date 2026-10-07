@@ -10,9 +10,14 @@ services:
   data-tier:
     build:
       context: ./data-tier
+    env_file:
+      - .env
     ports:
       - "8082:8080"
       - "50051:50051"
+    depends_on:
+      - postgres
+      - mysql
 
   postgres:
     image: postgres:17
