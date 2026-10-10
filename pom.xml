@@ -22,22 +22,11 @@
     <jakartaee-api.version>11.0.0</jakartaee-api.version>
   </properties>
 
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>jakarta.platform</groupId>
-        <artifactId>jakarta.jakartaee-api</artifactId>
-        <version>${jakartaee-api.version}</version>
-        <scope>provided</scope>
-        <type>pom</type>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
-
   <dependencies>
     <dependency>
       <groupId>jakarta.platform</groupId>
       <artifactId>jakarta.jakartaee-api</artifactId>
+      <version>${jakartaee-api.version}</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>
