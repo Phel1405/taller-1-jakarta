@@ -4,6 +4,7 @@ import com.example.logic.client.DataTierClient;
 import com.example.logic.dtos.product.ActualizarProductoRequest;
 import com.example.logic.dtos.product.AjustarInventarioRequest;
 import com.example.logic.dtos.product.CrearProductoRequest;
+import com.example.logic.dtos.product.IdResponse;
 import com.example.logic.dtos.product.InventarioResponse;
 import com.example.logic.dtos.product.ProductResponse;
 
@@ -24,22 +25,16 @@ public class ProductService {
     private DataTierClient dataTierClient;
 
     public ProductResponse crear(CrearProductoRequest request) {
-        record IdResponse(Long id) {
-        }
         IdResponse creado = dataTierClient.post("commands/productos", request, IdResponse.class);
         return obtener(creado.id());
     }
 
     public ProductResponse actualizar(Long id, ActualizarProductoRequest request) {
-        record IdResponse(Long id) {
-        }
         dataTierClient.put("commands/productos/" + id, request, IdResponse.class);
         return obtener(id);
     }
 
     public void ajustarInventario(Long id, AjustarInventarioRequest request) {
-        record IdResponse(Long id) {
-        }
         dataTierClient.put("commands/productos/" + id + "/inventario", request, IdResponse.class);
     }
 
