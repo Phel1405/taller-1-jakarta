@@ -4,7 +4,7 @@ embed-server --server-config=standalone-full.xml --std-out=echo
 # Driver JDBC de PostgreSQL, registrado como módulo de WildFly.
 # ---------------------------------------------------------------------------
 module add --name=org.postgresql --resources=/tmp/drivers/postgresql.jar \
-    --dependencies=jakarta.api,jakarta.transaction.api,javax.api
+    --dependencies=java.sql,java.naming,java.transaction.xa
 
 /subsystem=datasources/jdbc-driver=postgresql:add( \
     driver-name=postgresql, \
@@ -15,7 +15,7 @@ module add --name=org.postgresql --resources=/tmp/drivers/postgresql.jar \
 # Driver JDBC de MySQL, registrado como módulo de WildFly.
 # ---------------------------------------------------------------------------
 module add --name=com.mysql --resources=/tmp/drivers/mysql-connector-j.jar \
-    --dependencies=jakarta.api,jakarta.transaction.api,javax.api
+    --dependencies=java.sql,java.naming,java.transaction.xa
 
 /subsystem=datasources/jdbc-driver=mysql:add( \
     driver-name=mysql, \
