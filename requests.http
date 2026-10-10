@@ -1,0 +1,104 @@
+### Variables
+@base = http://localhost:8081/jakartaee-logic-tier/api
+
+### 1. Crear producto Teclado
+POST {{base}}/productos
+Content-Type: application/json
+
+{
+  "nombre": "Teclado",
+  "descripcion": "Mecanico",
+  "precio": 150000,
+  "stockInicial": 10
+}
+
+### 2. Crear producto Monitor
+POST {{base}}/productos
+Content-Type: application/json
+
+{
+  "nombre": "Monitor",
+  "descripcion": "4K",
+  "precio": 900000,
+  "stockInicial": 5
+}
+
+### 3. Listar productos
+GET {{base}}/productos
+
+### 4. Obtener producto 1
+GET {{base}}/productos/1
+
+### 5. Actualizar precio/disponibilidad del producto 1
+PUT {{base}}/productos/1
+Content-Type: application/json
+
+{
+  "precio": 160000,
+  "disponible": true
+}
+
+### 6. Ajustar inventario del producto 1 (+5 unidades)
+PUT {{base}}/productos/1/inventario
+Content-Type: application/json
+
+{
+  "delta": 5
+}
+
+### 7. Listar inventario
+GET {{base}}/inventario
+
+### 8. Pedido EXITOSO (total bajo el limite de pago)
+POST {{base}}/pedidos
+Content-Type: application/json
+
+{
+  "clienteId": "cliente-exitoso",
+  "items": [
+    { "productoId": 1, "cantidad": 2 }
+  ]
+}
+
+### 9. Pedido con PAGO RECHAZADO (total > PAGO_LIMITE = 1.000.000)
+POST {{base}}/pedidos
+Content-Type: application/json
+
+{
+  "clienteId": "cliente-rechazado",
+  "items": [
+    { "productoId": 2, "cantidad": 2 }
+  ]
+}
+
+### 10. Pedido SIN STOCK suficiente
+POST {{base}}/pedidos
+Content-Type: application/json
+
+{
+  "clienteId": "cliente-sin-stock",
+  "items": [
+    { "productoId": 2, "cantidad": 50 }
+  ]
+}
+
+### 11. Listar pedidos
+GET {{base}}/pedidos
+
+### 12. Obtener pedido 1 (con detalles)
+GET {{base}}/pedidos/1
+
+### 13. Obtener estado de la saga del pedido 1
+GET {{base}}/pedidos/1/saga
+
+### 14. Error 404: producto inexistente
+GET {{base}}/productos/9999
+
+### 15. Error 400: validacion (clienteId vacio, sin items)
+POST {{base}}/pedidos
+Content-Type: application/json
+
+{
+  "clienteId": "",
+  "items": []
+}
