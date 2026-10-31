@@ -1,271 +1,160 @@
-# Jakarta EE Distributed Application
+# Taller No. 1 — Arquitectura de Software (Jakarta EE)
 
-This project contains a distributed Jakarta EE application composed of two
-independently deployable services:
+Aplicación distribuida en dos tiers Jakarta EE puros (sin Spring), desplegados
+como WAR en WildFly 40.0.1.Final (JDK 21), comunicados por REST (JAX-RS), con
+persistencia JPA/JTA sobre dos bases de datos (PostgreSQL y MySQL), una SAGA
+por orquestación y CQRS en el lado de datos.
 
-- **Logic Service** — Contains the application and business logic.
-- **Data Service** — Handles data access and communication with the database.
-- **gRPC** — Used for communication between the Logic Service and Data Service.
-- **Docker Compose** — Used to run both services together in separate
-  containers.
+## Requisitos
 
-Each service runs in its own JVM and WildFly instance.
+- JDK 21
+- Maven (o el wrapper `./mvnw` incluido en cada módulo)
+- Docker y Docker Compose
 
-## Project Structure
+## Compilar
+
+```bash
+mvn clean package
+```
+
+Genera `data-tier/target/jakartaee-data-tier.war` y
+`logic-tier/target/jakartaee-logic-tier.war`.
+
+## Levantar el stack
+
+```bash
+docker compose down -v      # limpia volúmenes si vienes de una versión anterior
+docker compose up -d --build
+```
+
+Servicios:
+
+| Servicio    | Puerto host | Descripción                         |
+|-------------|-------------|--------------------------------------|
+| logic-tier  | 8081        | Fachada pública (JAX-RS)             |
+| data-tier   | 8082        | API interna de datos (JAX-RS + JPA)  |
+| postgres    | 5433        | `pedidosPU`: producto, inventario, pedido, saga |
+| mysql       | 3307        | `pagosPU`: pago                      |
+
+La base pública es `http://localhost:8081/jakartaee-logic-tier/api`.
+
+## Probar
+
+```bash
+bash scripts/demo.sh
+```
+
+Ejecuta: creación de productos, consulta de inventario, un pedido exitoso,
+uno con pago rechazado y uno sin stock, y consulta el pedido y su saga.
+También hay una colección `requests.http` con las mismas pruebas en formato
+REST Client.
+
+Verificación manual en las bases de datos:
+
+```bash
+docker compose exec postgres psql -U dev -d postgresdb -c "select id,estado,total from pedido; select * from saga_pedido;"
+docker compose exec mysql mysql -udev -pTest1234 mysqldb -e "select * from pago;"
+```
+
+## Estructura de paquetes
 
 ```text
-.
-├── pom.xml
-├── docker-compose.yml
-│
-├── logic-service/
-│   ├── pom.xml
-│   ├── Dockerfile
-│   └── src/
-│
-└── data-service/
-    ├── pom.xml
-    ├── Dockerfile
-    └── src/
+data-tier/com.example.data
+├── entities/     Producto, Inventario, Pedido, DetallePedido,
+│                 ReservaInventario, SagaPedido (pedidosPU) y Pago (pagosPU)
+├── repository/   acceso a datos vía EntityManager (CDI, sin Spring Data)
+├── command/      lado de ESCRITURA de CQRS: servicios @Transactional +
+│                 recursos JAX-RS /api/commands/...
+├── query/        lado de LECTURA de CQRS: proyecciones JPQL "SELECT NEW"
+│                 a DTOs/records + recursos JAX-RS /api/queries/...
+├── saga/         SagaOrquestador: CREAR -> RESERVAR -> PAGAR -> CONFIRMAR
+├── dto/          records de entrada/salida de la API del data-tier
+├── exception/    excepciones de dominio
+└── web/          Application JAX-RS + ExceptionMapper -> {codigo, mensaje}
+
+logic-tier/com.example.logic
+├── controllers/  recursos JAX-RS públicos (/api/productos, /api/pedidos, /api/inventario)
+├── services/     traducen DTOs públicos a llamadas al data-tier
+├── client/       DataTierClient (jakarta.ws.rs.client.Client)
+├── dtos/         records públicos (requests/responses)
+├── exception/    DataTierErrorException, DataTierNoDisponibleException
+└── web/          Application JAX-RS + ExceptionMapper -> {codigo, mensaje}
 ```
 
-## Requirements
+## Variables de entorno relevantes
 
-The following software is required:
+- `DATA_TIER_URL` (logic-tier): URL base del data-tier.
+  Por defecto `http://data-tier:8080/jakartaee-data-tier/api`.
+- `PAGO_LIMITE` (data-tier): monto máximo que aprueba el pago simulado.
+  Por defecto `1000000`.
+- `POSTGRES_*`, `MYSQL_*` (`.env`): credenciales de ambas bases, usadas
+  tanto por los contenedores de base de datos como por los datasources XA
+  de WildFly (vía expresiones `${env.*}` resueltas en el arranque).
 
-- [Java SE 21](https://adoptium.net)
-- [Docker](https://docs.docker.com/get-docker/)
-- Docker Compose
+## Justificación de decisiones
 
-The Maven Wrapper is included with each service, so a separate Maven
-installation is not required.
+### Orquestación vs. coreografía
 
-On Linux/macOS, you may need to make the Maven Wrapper executable:
+Se eligió **orquestación** (`SagaOrquestador` centraliza CREAR → RESERVAR →
+PAGAR → CONFIRMAR) porque el flujo es lineal y conocido de antemano, las
+compensaciones son explícitas y fáciles de razonar en un único lugar, y el
+estado de la saga queda centralizado en `saga_pedido`. La coreografía (cada
+servicio reacciona a eventos del anterior) brilla con muchos participantes
+desacoplados y un broker de mensajes, pero aquí habría añadido infraestructura
+(colas, productores/consumidores) sin beneficio real para dos bases de datos
+y cuatro pasos.
 
-```bash
-chmod +x logic-service/mvnw
-chmod +x data-service/mvnw
-```
+### JTA vs. SAGA
 
-## Building the Services
+La saga completa **nunca** es una sola transacción JTA: cada paso
+(`crearPendiente`, `reservar`, `confirmar`, `cancelar`, `liberarReservas`)
+es una transacción local y corta (`@Transactional(REQUIRES_NEW)`) que
+confirma o revierte por sí misma. Solo **procesar pago** abre una
+transacción XA distribuida real: en el mismo método se escribe en MySQL
+(`pago`) y en PostgreSQL (`pedido`, `saga_pedido`); al enlistar dos
+XAResources en una misma transacción JTA, WildFly/Narayana coordina un
+**two-phase commit (2PC)**. Si todo el flujo fuera una única transacción
+JTA, perderíamos la posibilidad de comitear lo que ya es válido (ej.
+el pedido creado) y compensar explícitamente lo demás; además una
+transacción JTA larga que cruza llamadas HTTP y múltiples recursos durante
+segundos/minutos es frágil y bloquea recursos innecesariamente.
 
-The Dockerfiles expect the WAR files to already exist in each service's
-`target/` directory. Therefore, the services must be built with Maven before
-building the Docker images.
+### Nivel de CQRS elegido
 
-### 1. Build the Logic Service
+CQRS "ligero": **misma base de datos**, pero **modelos y servicios
+separados**. El lado de comando (`command/`) opera sobre entidades JPA
+administradas y confirma transacciones. El lado de consulta (`query/`)
+nunca devuelve entidades: usa proyecciones JPQL `SELECT NEW ...` directo a
+records inmutables, con `TxType.SUPPORTS` (no abre transacciones de
+escritura). No se usó una base de lectura separada ni reconstrucción por
+eventos porque el volumen y la consistencia requerida no lo justifican en
+este taller; aun así, la separación de paquetes y de modelos deja el camino
+abierto para escalar a una base de lectura distinta si fuera necesario.
 
-From the project root:
+### REST y no gRPC entre tiers
 
-```bash
-cd logic-service
-./mvnw clean package
-cd ..
-```
+Se reemplazó gRPC por JAX-RS/REST porque es el estilo de comunicación nativo
+de Jakarta EE (sin generación de stubs ni dependencias de protobuf), más
+simple de depurar con `curl`/`requests.http`, y suficiente para la
+cardinalidad de llamadas entre dos tiers. El logic-tier usa
+`jakarta.ws.rs.client.Client` apuntando a `DATA_TIER_URL` (configurable,
+por defecto `http://data-tier:8080/jakartaee-data-tier/api`).
 
-This generates:
+## Conceptos aplicados (resumen rápido)
 
-```text
-logic-service/target/jakartaee-logic-tier.war
-```
-
-### 2. Build the Data Service
-
-From the project root:
-
-```bash
-cd data-service
-./mvnw clean package
-cd ..
-```
-
-This generates:
-
-```text
-data-service/target/jakartaee-data-tier.war
-```
-
-## Building the Docker Images
-
-Once both WAR files have been generated, build the Docker images from the
-project root:
-
-```bash
-docker compose build
-```
-
-Docker uses the Dockerfile in each service directory:
-
-```text
-logic-service/Dockerfile
-data-service/Dockerfile
-```
-
-The resulting architecture is:
-
-```text
-┌─────────────────────────┐
-│     Logic Service       │
-│                         │
-│  WildFly + Java 21      │
-│  logic-tier.war         │
-└────────────┬────────────┘
-             │
-             │ gRPC
-             ▼
-┌─────────────────────────┐
-│      Data Service       │
-│                         │
-│  WildFly + Java 21      │
-│  data-tier.war          │
-└────────────┬────────────┘
-             │
-             │ JDBC / JPA
-             ▼
-┌─────────────────────────┐
-│        Database         │
-└─────────────────────────┘
-```
-
-## Running the Application
-
-After building both WAR files and Docker images, start the complete application
-with:
-
-```bash
-docker compose up
-```
-
-To rebuild the images and start the application in one command:
-
-```bash
-docker compose up --build
-```
-
-To run the containers in the background:
-
-```bash
-docker compose up -d
-```
-
-To stop the application:
-
-```bash
-docker compose down
-```
-
-## Development Workflow
-
-The recommended workflow is:
-
-```text
-1. Modify the code
-       │
-       ▼
-2. Build Logic Service
-   ./mvnw clean package
-       │
-       ▼
-3. Build Data Service
-   ./mvnw clean package
-       │
-       ▼
-4. Build Docker images
-   docker compose build
-       │
-       ▼
-5. Start the services
-   docker compose up
-```
-
-From the project root, the complete sequence is:
-
-```bash
-cd logic-service
-./mvnw clean package
-cd ../data-service
-./mvnw clean package
-cd ..
-docker compose up --build
-```
-
-## Running the Services Individually
-
-For development and debugging, each service can also be started independently
-using its Maven Wrapper.
-
-For example, to start the Logic Service:
-
-```bash
-cd logic-service
-./mvnw wildfly:dev
-```
-
-And to start the Data Service:
-
-```bash
-cd data-service
-./mvnw wildfly:dev
-```
-
-However, when testing the complete distributed architecture, Docker Compose
-should be used so that the services run in separate containers and communicate
-through the Docker network.
-
-## Stopping and Cleaning
-
-Stop the containers with:
-
-```bash
-docker compose down
-```
-
-Maven's `target/` directories contain generated build artifacts and should not
-be committed to Git. They can safely be removed and regenerated:
-
-```bash
-rm -rf logic-service/target
-rm -rf data-service/target
-```
-
-Or simply use:
-
-```bash
-./mvnw clean
-```
-
-inside each service.
-
-## Architecture
-
-The application is intentionally separated into independently deployable tiers:
-
-```text
-         Client
-           │
-           │ HTTP
-           ▼
-┌─────────────────────┐
-│    Logic Service    │
-│                     │
-│ Jakarta EE          │
-│ WildFly / JVM       │
-└──────────┬──────────┘
-           │
-           │ gRPC
-           ▼
-┌─────────────────────┐
-│    Data Service     │
-│                     │
-│ Jakarta EE          │
-│ WildFly / JVM       │
-└──────────┬──────────┘
-           │
-           │ JPA / JDBC
-           ▼
-       Database
-```
-
-The Logic Service does not directly access the database. Communication with the
-Data Service occurs through the gRPC interface, allowing the two services to run
-in separate JVMs, containers, or physical machines.
+- **XA / 2PC**: protocolo de confirmación en dos fases que permite que una
+  transacción toque dos bases de datos distintas y, aun así, se confirme o
+  revierta en ambas de forma atómica.
+- **REQUIRES_NEW**: atributo de transacción que SIEMPRE abre una transacción
+  nueva e independiente, incluso si ya hay una en curso — así cada paso de
+  la saga es verdaderamente aislado y confirma por su cuenta.
+- **Optimistic lock (`@Version`)**: en vez de bloquear filas, cada
+  actualización verifica que nadie cambió el registro desde que lo leíste
+  (comparando una columna de versión); si cambió, lanza
+  `OptimisticLockException` y el llamador decide si reintenta.
+- **Proyección JPQL (`SELECT NEW ...`)**: construye directamente un DTO/record
+  desde la consulta, sin traer la entidad completa ni dejarla "managed" —
+  ideal para el lado de lectura de CQRS.
+- **Compensación**: acción inversa (liberar inventario, cancelar pedido) que
+  deshace el efecto de un paso ya confirmado, cuando un paso posterior falla
+  y ya no se puede hacer rollback de lo anterior.

@@ -1,0 +1,63 @@
+embed-server --server-config=standalone-full.xml --std-out=echo
+
+# ---------------------------------------------------------------------------
+# Driver JDBC de PostgreSQL, registrado como módulo de WildFly.
+# ---------------------------------------------------------------------------
+module add --name=org.postgresql --resources=/tmp/drivers/postgresql.jar \
+    --dependencies=java.sql,java.naming,java.transaction.xa
+
+/subsystem=datasources/jdbc-driver=postgresql:add( \
+    driver-name=postgresql, \
+    driver-module-name=org.postgresql, \
+    driver-xa-datasource-class-name=org.postgresql.xa.PGXADataSource)
+
+# ---------------------------------------------------------------------------
+# Driver JDBC de MySQL, registrado como módulo de WildFly.
+# ---------------------------------------------------------------------------
+module add --name=com.mysql --resources=/tmp/drivers/mysql-connector-j.jar \
+    --dependencies=java.sql,java.naming,java.transaction.xa
+
+/subsystem=datasources/jdbc-driver=mysql:add( \
+    driver-name=mysql, \
+    driver-module-name=com.mysql, \
+    driver-xa-datasource-class-name=com.mysql.cj.jdbc.MysqlXADataSource)
+
+# ---------------------------------------------------------------------------
+# XA datasource PedidosDS -> PostgreSQL (pedidosPU). Las credenciales se
+# dejan como expresiones ${env.*}: WildFly las resuelve en el arranque del
+# contenedor, con las variables de entorno reales, no en tiempo de build.
+# ---------------------------------------------------------------------------
+xa-data-source add --name=PedidosDS --jndi-name=java:jboss/datasources/PedidosDS \
+    --driver-name=postgresql \
+    --xa-datasource-class=org.postgresql.xa.PGXADataSource \
+    --user-name=${env.POSTGRES_USER} --password=${env.POSTGRES_PASSWORD} \
+    --enabled=true --use-ccm=true --same-rm-override=false
+
+/subsystem=datasources/xa-data-source=PedidosDS/xa-datasource-properties=ServerName:add(value=postgres)
+/subsystem=datasources/xa-data-source=PedidosDS/xa-datasource-properties=PortNumber:add(value=5432)
+/subsystem=datasources/xa-data-source=PedidosDS/xa-datasource-properties=DatabaseName:add(value=${env.POSTGRES_DB})
+
+# ---------------------------------------------------------------------------
+# XA datasource PagosDS -> MySQL (pagosPU).
+# pinGlobalTxToPhysicalConnection=true es obligatorio para que el driver de
+# MySQL soporte correctamente 2PC dentro de una transacción XA global.
+# ---------------------------------------------------------------------------
+xa-data-source add --name=PagosDS --jndi-name=java:jboss/datasources/PagosDS \
+    --driver-name=mysql \
+    --xa-datasource-class=com.mysql.cj.jdbc.MysqlXADataSource \
+    --user-name=${env.MYSQL_USER} --password=${env.MYSQL_PASSWORD} \
+    --enabled=true --use-ccm=true --same-rm-override=false
+
+/subsystem=datasources/xa-data-source=PagosDS/xa-datasource-properties=ServerName:add(value=mysql)
+/subsystem=datasources/xa-data-source=PagosDS/xa-datasource-properties=PortNumber:add(value=3306)
+/subsystem=datasources/xa-data-source=PagosDS/xa-datasource-properties=DatabaseName:add(value=${env.MYSQL_DATABASE})
+/subsystem=datasources/xa-data-source=PagosDS/xa-datasource-properties=pinGlobalTxToPhysicalConnection:add(value=true)
+
+# ---------------------------------------------------------------------------
+# Identificador único del subsistema de transacciones de este nodo. Necesario
+# para que el Transaction Manager (Narayana) distinga este nodo de otros al
+# coordinar transacciones XA / 2PC.
+# ---------------------------------------------------------------------------
+/subsystem=transactions:write-attribute(name=node-identifier, value=data-tier)
+
+stop-embedded-server
